@@ -1,33 +1,76 @@
-import numpy as np
+# exp4_chsh_numerical_validation_final.py
 
-# Define the discrete finite phase group: 8th roots of unity
-phase_set = np.exp(1j * np.pi * np.arange(8) / 4)
+import itertools
+import cmath
+import math
 
-max_S = 0+0j
-max_config = None
+# Precompute the 8th roots of unity
+roots = [cmath.exp(1j * 2 * math.pi * k / 8) for k in range(8)]
 
-# Fix phi_a0 = 1 (phase_set[0])
-phi_a0 = phase_set[0]
+# Causal-site parent structure for CHSH
+parents = {
+    'H1': [], 'H2': [],        # Hidden seeds
+    'M': ['H1', 'H2'],         # Mixing node
+    'R_A0': [], 'R_A1': [],    # Rotation constants
+    'R_B0': [], 'R_B1': [],
+    'A0': ['M', 'R_A0'],       # Measurement nodes
+    'A1': ['M', 'R_A1'],
+    'B0': ['M', 'R_B0'],
+    'B1': ['M', 'R_B1'],
+}
 
-# Exhaustively enumerate phi_a1, phi_b0, phi_b1 from the discrete set
-for phi_a1 in phase_set:
-    for phi_b0 in phase_set:
-        # Precompute correlations E(a0,b0) and E(a1,b0)
-        E00 = np.real(phi_a0 * np.conj(phi_b0))
-        E10 = np.real(phi_a1 * np.conj(phi_b0))
-        for phi_b1 in phase_set:
-            E01 = np.real(phi_a0 * np.conj(phi_b1))
-            E11 = np.real(phi_a1 * np.conj(phi_b1))
-            S = E00 + E01 + E10 - E11
-            if S > max_S:
-                max_S = S
-                max_config = (phi_a1, phi_b0, phi_b1)
+# Topological evaluation order
+order = ['H1', 'H2', 'M',
+         'R_A0', 'R_A1', 'R_B0', 'R_B1',
+         'A0', 'A1', 'B0', 'B1']
 
-# Report results
-print(f"Max CHSH from 8th roots enumeration: {max_S:.6f}")
-print("Optimal discrete configuration (phi_a1, phi_b0, phi_b1):")
-print(max_config)
+# Fixed rotation-phase tags
+rotation_phases = {
+    'R_A0': roots[0],  # 0°
+    'R_A1': roots[2],  # 90°
+    'R_B0': roots[1],  # 45°
+    'R_B1': roots[7],  # -45°
+}
 
-# Verify against Tsirelson bound exactly
-tsirelson = 2 * np.sqrt(2)
-assert np.isclose(max_S, tsirelson, atol=1e-6), "Discrete enumeration fails to reach Tsirelson bound!"
+# Fusion operation: complex multiplication
+def fuse(phases):
+    prod = 1+0j
+    for p in phases:
+        prod *= p
+    return prod
+
+# Accumulators for Real-part correlator sums
+sum_E = {('A0','B0'): 0.0, ('A0','B1'): 0.0,
+         ('A1','B0'): 0.0, ('A1','B1'): 0.0}
+total = 0
+
+# Enumerate over all hidden seed assignments
+for h1_idx, h2_idx in itertools.product(range(8), repeat=2):
+    # Initialize tags for hidden seeds and rotation constants
+    tags = {
+        'H1': roots[h1_idx],
+        'H2': roots[h2_idx],
+        **rotation_phases
+    }
+    # Propagate through the DAG
+    for node in order:
+        if node not in tags:
+            tags[node] = fuse([tags[p] for p in parents[node]])
+    # Accumulate Re[tag_A * conj(tag_B)] for each pair
+    for (a, b) in sum_E:
+        sum_E[(a, b)] += (tags[a] * tags[b].conjugate()).real
+    total += 1
+
+# Compute expectation values
+E = { pair: sum_E[pair] / total for pair in sum_E }
+
+# Compute CHSH S
+S = E[('A0','B0')] + E[('A0','B1')] + E[('A1','B0')] - E[('A1','B1')]
+
+# Output and verify
+print("Correlators E(a,b):", {k: f"{v:.6f}" for k, v in E.items()})
+print("CHSH S value:     ", f"{S:.6f}")
+print("Tsirelson bound:   ", f"{2 * math.sqrt(2):.6f}")
+
+assert math.isclose(S, 2 * math.sqrt(2), rel_tol=1e-9), "S does not match 2√2"
+
